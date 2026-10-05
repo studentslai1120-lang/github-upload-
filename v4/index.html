@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>英打遊戲｜版本四 掉落字母</title>
+<style>
+  [hidden]{display:none!important}
+  :root{font-family:system-ui,"Microsoft JhengHei",sans-serif;color:#243e38;background:#f5f3ec;line-height:1.6}
+  *{box-sizing:border-box}
+  body{margin:0}
+  main{max-width:760px;margin:auto;padding:28px 18px;text-align:center}
+  .eyebrow{font-size:13px;letter-spacing:.14em;color:#596f62;margin:0}
+  h1{font-size:clamp(28px,6vw,42px);margin:6px 0 8px}
+  .panel{background:#fff;border:1px solid #ccd7ce;border-radius:20px;padding:18px;margin:16px 0}
+  .stats{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-bottom:12px}
+  .stats span{background:#edf1e9;padding:6px 14px;border-radius:10px}
+  .stats b{font-size:26px}
+  #sky{height:300px;position:relative;overflow:hidden;border-radius:16px;background:linear-gradient(#e2edf0,#f5f0df);border-bottom:8px solid #a5b794}
+  #sky .hint{position:absolute;top:10px;left:14px;color:#506664;font-size:13px}
+  #sky.paused{filter:grayscale(.7)}
+  #sky.shake{animation:shake .25s}
+  @keyframes shake{25%{transform:translateX(-6px)}75%{transform:translateX(6px)}}
+  #letter{position:absolute;top:0;width:60px;height:60px;display:grid;place-items:center;border-radius:16px;background:#ab4939;color:#fff;font-size:36px;font-weight:800;box-shadow:0 6px 0 #d2aa92}
+  #letter.splat{background:#6b716c;transform:scaleY(.6);transform-origin:bottom}
+  .dot{position:absolute;width:10px;height:10px;border-radius:50%;background:#e0a13a;transition:transform .5s ease-out,opacity .5s;pointer-events:none}
+  .pop{position:absolute;font-weight:800;color:#2f6f4f;font-size:22px;transition:transform .7s,opacity .7s;pointer-events:none}
+  .keys{display:flex;gap:6px;justify-content:center;margin-top:14px;flex-wrap:wrap}
+  .k{width:50px;height:46px;display:grid;place-items:center;border-radius:8px;border:1px solid #98ad9e;border-bottom-width:4px;background:#f9faf4;color:#53645a;font-size:20px;font-weight:700;user-select:none}
+  .k.target{background:#a1332e;color:#fff;border-color:#682a28;transform:translateY(-2px)}
+  .k.ok{background:#4f9a6a;color:#fff}
+  .k.bad{background:#d9a441;color:#fff}
+  .controls{display:flex;gap:16px 24px;justify-content:center;align-items:center;flex-wrap:wrap}
+  .controls label{display:flex;gap:8px;align-items:center}
+  input[type=range]{accent-color:#426d5e;width:160px}
+  button{font:inherit;padding:10px 24px;border:1px solid #426d5e;border-radius:12px;background:#426d5e;color:#fff;cursor:pointer}
+  button.secondary{background:#fff;color:#284c40}
+  button:focus-visible,input:focus-visible{outline:3px solid #b16b35;outline-offset:3px}
+  #message{min-height:1.8em;font-size:18px;margin:10px 0 0}
+  .big{font-size:56px;font-weight:800;margin:0}
+  a{color:#205d50}
+  .help{font-size:14px;color:#526459}
+</style>
+</head>
+<body>
+<main>
+  <p class="eyebrow">VERSION 04</p>
+  <h1>掉落字母：十鍵挑戰</h1>
+  <p>字母會從天上掉下來，落地前按下<strong>鍵盤</strong>上對應的鍵打掉它。共 10 題。<br>
+  <span class="help">鍵盤：A S D F G H J K L ；　按 P 可暫停／繼續</span></p>
+
+  <section class="panel">
+    <div class="stats">
+      <span>得分 <b id="score">0</b></span>
+      <span>第 <b id="num">0</b> / 10 題</span>
+      <span>連續答對 <b id="combo">0</b></span>
+      <span>最佳 <b id="best">0</b></span>
+    </div>
+    <div id="sky"><div class="hint">落地前，按下對應的英文字母</div><div id="letter" hidden></div></div>
+    <div class="keys" id="keys" aria-hidden="true"></div>
+    <p id="message" role="status">調好設定，按「開始」。</p>
+  </section>
+
+  <section class="panel">
+    <div class="controls">
+      <label>落下時間
+        <input id="speed" type="range" min="2" max="8" step="0.5" value="5">
+        <output id="speedOut">5 秒</output>
+      </label>
+      <label><input id="accel" type="checkbox"> 漸進加速</label>
+      <label><input id="sound" type="checkbox" checked> 音效</label>
+    </div>
+    <p>
+      <button id="start" type="button">開始</button>
+      <button id="pause" type="button" class="secondary" hidden>暫停</button>
+    </p>
+  </section>
+
+  <section class="panel" id="result" hidden>
+    <p class="big" id="resultScore"></p>
+    <p id="resultText"></p>
+  </section>
+
+  <p><a href="../index.html">回開發歷程首頁</a></p>
+</main>
+<script>
+const KEYS = ['A','S','D','F','G','H','J','K','L',';'];
+const TOTAL = 10;
+const $ = id => document.getElementById(id);
+const sky = $('sky'), letterEl = $('letter');
+let phase = 'idle';          // idle | playing | paused | done
+let spawned = 0, score = 0, combo = 0, maxCombo = 0, cleared = 0;
+let cur = null;              // {ch, t, dur, x}
+let wait = 0;                // 題與題之間的短暫等待
+let last = 0;
+const held = new Set();
+let audio = null;
+
+// 十鍵顯示（只顯示，不能點）
+KEYS.forEach(k => {
+  const d = document.createElement('div');
+  d.className = 'k'; d.dataset.k = k; d.textContent = k;
+  $('keys').appendChild(d);
+});
+const keyEl = k => document.querySelector('.k[data-k="' + CSS.escape(k) + '"]');
+
+let best = 0;
+try { best = +localStorage.getItem('typing-v4-best') || 0; } catch (e) {}
+$('best').textContent = best;
+
+$('speed').addEventListener('input', () => $('speedOut').textContent = $('speed').value + ' 秒');
+
+function beep(freq, len) {
+  if (!$('sound').checked || !audio) return;
+  try {
+    const o = audio.createOscillator(), g = audio.createGain();
+    o.frequency.value = freq; o.type = 'square';
+    g.gain.setValueAtTime(0.08, audio.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, audio.currentTime + len);
+    o.connect(g); g.connect(audio.destination);
+    o.start(); o.stop(audio.currentTime + len);
+  } catch (e) {}
+}
+
+function duration() {
+  const base = +$('speed').value;
+  return $('accel').checked ? Math.max(1.2, base * Math.pow(0.92, spawned - 1)) : base;
+}
+
+function setTarget(k) {
+  KEYS.forEach(x => keyEl(x).classList.toggle('target', x === k));
+}
+
+function spawn() {
+  spawned++;
+  const prev = cur ? cur.ch : null;
+  const pool = KEYS.filter(k => k !== prev);
+  const ch = pool[Math.floor(Math.random() * pool.length)];
+  const w = sky.clientWidth;
+  cur = { ch, t: 0, dur: duration(), x: 20 + Math.random() * (w - 100) };
+  letterEl.textContent = ch;
+  letterEl.className = '';
+  letterEl.hidden = false;
+  letterEl.style.left = cur.x + 'px';
+  letterEl.style.top = '0px';
+  $('num').textContent = spawned;
+  setTarget(ch);
+}
+
+function burst(x, y, color) {
+  for (let i = 0; i < 10; i++) {
+    const d = document.createElement('div');
+    d.className = 'dot';
+    d.style.left = (x + 25) + 'px'; d.style.top = (y + 25) + 'px';
+    if (color) d.style.background = color;
+    sky.appendChild(d);
+    const a = Math.random() * Math.PI * 2, r = 40 + Math.random() * 50;
+    requestAnimationFrame(() => {
+      d.style.transform = 'translate(' + Math.cos(a) * r + 'px,' + Math.sin(a) * r + 'px)';
+      d.style.opacity = 0;
+    });
+    setTimeout(() => d.remove(), 600);
+  }
+}
+function pop(x, y, text) {
+  const p = document.createElement('div');
+  p.className = 'pop'; p.textContent = text;
+  p.style.left = x + 'px'; p.style.top = y + 'px';
+  sky.appendChild(p);
+  requestAnimationFrame(() => { p.style.transform = 'translateY(-40px)'; p.style.opacity = 0; });
+  setTimeout(() => p.remove(), 800);
+}
+function flashKey(k, cls) {
+  const el = keyEl(k); if (!el) return;
+  el.classList.add(cls);
+  setTimeout(() => el.classList.remove(cls), 150);
+}
+
+function nextOrEnd() {
+  cur = null;
+  letterEl.hidden = true;
+  setTarget(null);
+  if (spawned >= TOTAL) finish(); else wait = 0.5;
+}
+
+function hit() {
+  const y = parseFloat(letterEl.style.top) || 0;
+  score++; combo++; cleared++; maxCombo = Math.max(maxCombo, combo);
+  $('score').textContent = score; $('combo').textContent = combo;
+  burst(cur.x, y);
+  pop(cur.x + 10, y, combo >= 3 ? '+1  ' + combo + ' 連擊!' : '+1');
+  beep(880, 0.08);
+  $('message').textContent = '打中了！';
+  nextOrEnd();
+}
+
+function land() {
+  combo = 0; $('combo').textContent = 0;
+  letterEl.classList.add('splat');
+  beep(200, 0.2);
+  sky.classList.add('shake');
+  setTimeout(() => sky.classList.remove('shake'), 300);
+  $('message').textContent = '字母 ' + cur.ch + ' 落地了！';
+  const c = cur; cur = null; setTarget(null);
+  setTimeout(() => { letterEl.hidden = true; }, 300);
+  if (spawned >= TOTAL) { setTimeout(finish, 350); } else wait = 0.8;
+  void c;
+}
+
+function finish() {
+  phase = 'done';
+  $('pause').hidden = true; $('start').hidden = false; $('start').textContent = '再玩一次';
+  setSettings(false);
+  let title = score === TOTAL ? '打字大師！' : score >= 8 ? '手指很靈活' : score >= 5 ? '再熟練一點就更棒' : '繼續練習，下次會更好';
+  if (score > best) { best = score; $('best').textContent = best; try { localStorage.setItem('typing-v4-best', best); } catch (e) {} title += '（新紀錄！）'; }
+  $('resultScore').textContent = score + ' / ' + TOTAL;
+  $('resultText').textContent = title + '　最長連續答對：' + maxCombo;
+  $('result').hidden = false;
+  $('message').textContent = '遊戲結束。';
+}
+
+function setSettings(disabled) {
+  $('speed').disabled = disabled; $('accel').disabled = disabled;
+}
+
+function startGame() {
+  if (!audio) { try { audio = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} }
+  if (audio && audio.state === 'suspended') audio.resume();
+  phase = 'playing';
+  spawned = 0; score = 0; combo = 0; maxCombo = 0; cleared = 0; cur = null; wait = 0.3;
+  $('score').textContent = 0; $('combo').textContent = 0; $('num').textContent = 0;
+  $('result').hidden = true;
+  $('start').hidden = true; $('pause').hidden = false; $('pause').textContent = '暫停';
+  setSettings(true);
+  sky.classList.remove('paused');
+  $('message').textContent = '準備！用鍵盤打字。';
+  last = performance.now();
+  document.activeElement && document.activeElement.blur();
+}
+
+function togglePause() {
+  if (phase === 'playing') {
+    phase = 'paused'; sky.classList.add('paused');
+    $('pause').textContent = '繼續'; $('message').textContent = '已暫停，按 P 或「繼續」。';
+  } else if (phase === 'paused') {
+    phase = 'playing'; sky.classList.remove('paused'); last = performance.now();
+    $('pause').textContent = '暫停'; $('message').textContent = '繼續！';
+  }
+  document.activeElement && document.activeElement.blur();
+}
+
+function loop(now) {
+  const dt = Math.min(0.1, (now - last) / 1000); last = now;
+  if (phase === 'playing') {
+    if (cur) {
+      cur.t += dt / cur.dur;
+      const maxY = sky.clientHeight - 60;
+      letterEl.style.top = Math.min(1, cur.t) * maxY + 'px';
+      if (cur.t >= 1) land();
+    } else if (wait > 0) {
+      wait -= dt;
+      if (wait <= 0 && spawned < TOTAL) spawn();
+    }
+  }
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(t => { last = t; loop(t); });
+
+function press(k) {
+  if (phase !== 'playing' || !cur) return;
+  if (k === cur.ch) { flashKey(k, 'ok'); hit(); }
+  else {
+    flashKey(k, 'bad'); combo = 0; $('combo').textContent = 0;
+    beep(300, 0.08);
+    $('message').textContent = '按錯了，目標是 ' + cur.ch;
+  }
+}
+
+document.addEventListener('keydown', e => {
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  const k = e.key.length === 1 ? e.key.toUpperCase() : e.key;
+  if ((k === 'P' || k === 'ESCAPE') && (phase === 'playing' || phase === 'paused')) {
+    if (!e.repeat) togglePause();
+    return;
+  }
+  if (!/^[A-Z;]$/.test(k)) return;
+  if (e.repeat || held.has(k)) return;   // 長按不連續計分
+  held.add(k);
+  press(k);
+});
+document.addEventListener('keyup', e => held.delete(e.key.length === 1 ? e.key.toUpperCase() : e.key));
+window.addEventListener('blur', () => { held.clear(); if (phase === 'playing') togglePause(); });
+
+$('start').addEventListener('click', startGame);
+$('pause').addEventListener('click', togglePause);
+</script>
+</body>
+</html>
